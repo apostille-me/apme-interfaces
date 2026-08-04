@@ -1,0 +1,12 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "title": "Example Case",
+  "summary": "Case operations for visa and apostille consulting.",
+  "status": "intake",
+  "created_at": "2026-08-04T12:00:00Z",
+  "updated_at": "2026-08-04T12:00:00Z",
+  "client_reference": "CLIENT-2026-0042",
+  "destination_country": "Peru",
+  "document_type": "FBI background check",
+  "next_action_due_at": "2026-08-21T17:00:00Z"
+}
