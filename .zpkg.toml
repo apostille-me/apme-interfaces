@@ -1,0 +1,16 @@
+[package]
+org = "apostille-me"
+name = "apme-interfaces"
+version = "0.1.0"
+description = "Shared interfaces and schemas for Apostille Me"
+license = "MIT"
+language = "polyglot"
+
+[package.repository]
+vcs = "git"
+url = "https://github.com/apostille-me/apme-interfaces"
+
+[publish]
+include_readme = true
+tag_format = "v{version}"
+exclude = [".env", ".env.*", "node_modules/**", "target/**", "dist/**", "*.log"]
