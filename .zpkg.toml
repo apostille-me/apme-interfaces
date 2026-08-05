@@ -13,7 +13,11 @@ url = "https://github.com/apostille-me/apme-interfaces"
 [publish]
 include_readme = true
 tag_format = "v{version}"
-exclude = [".env", ".env.*", "node_modules/**", "target/**", "dist/**", "*.log"]
+exclude = [".env", ".env.*", "node_modules/**", "zed_modules/**", "target/**", "dist/**", "*.log"]
 
 [targets.repository]
 dir = "."
+
+[install]
+dir = "zed_modules"
+adapter = "none"
