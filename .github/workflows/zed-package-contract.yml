@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out package without credentials
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: package
           fetch-depth: 0
@@ -38,7 +38,7 @@ jobs:
           submodules: false
 
       - name: Check out exact Zed CLI
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: zed-pkg/zed-cli
           ref: ${{ env.ZED_CLI_SHA }}
@@ -107,6 +107,7 @@ jobs:
           plan_path = Path("release-plan.json")
           plan = json.loads(plan_path.read_text(encoding="utf-8"))
           expected_package = os.environ["EXPECTED_PACKAGE"]
+          expected_target_package = f"{expected_package}-repository"
           expected_version = os.environ["EXPECTED_VERSION"]
           expected_tag = os.environ["EXPECTED_TAG"]
           source = plan.get("source", {})
@@ -116,8 +117,11 @@ jobs:
           assert source.get("repository") == "https://github.com/apostille-me/apme-interfaces", source
           zed_artifacts = plan.get("zed", [])
           assert len(zed_artifacts) == 1, zed_artifacts
-          assert zed_artifacts[0].get("package") == expected_package, zed_artifacts
-          assert zed_artifacts[0].get("version") == expected_version, zed_artifacts
+          target = zed_artifacts[0]
+          assert target.get("target") == "repository", target
+          assert target.get("package") == expected_target_package, target
+          assert target.get("version") == expected_version, target
+          assert target.get("dir") == ".", target
           assert not plan.get("native"), plan.get("native")
           assert not plan.get("forge"), plan.get("forge")
 
@@ -150,6 +154,8 @@ jobs:
           evidence = {
               "schemaVersion": 1,
               "package": expected_package,
+              "targetPackage": expected_target_package,
+              "target": "repository",
               "version": expected_version,
               "expectedTag": expected_tag,
               "zedCliRevision": os.environ["ZED_CLI_SHA"],
@@ -238,7 +244,7 @@ jobs:
     environment: zed-registry
     steps:
       - name: Check out immutable tag without persisted credentials
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: package
           fetch-depth: 0
@@ -248,7 +254,7 @@ jobs:
           submodules: false
 
       - name: Check out exact Zed CLI
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: zed-pkg/zed-cli
           ref: ${{ env.ZED_CLI_SHA }}
