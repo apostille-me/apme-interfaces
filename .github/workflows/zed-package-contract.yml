@@ -1,19 +1,326 @@
-name: Zed package contract
+name: Zed package contract and release
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: zed-package-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  ZED_CLI_SHA: 1ab18fcb2ff884e82af4cac4513d7b983a23c84a
+  ZED_REGISTRY: https://registry.zpkg.net
+  EXPECTED_PACKAGE: apostille-me/apme-interfaces
+  EXPECTED_VERSION: 0.1.0
+  EXPECTED_TAG: v0.1.0
+
 jobs:
-  contract:
+  preflight:
+    name: Exact CLI release and artifact preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out package without credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          path: package
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
-      - run: python3 scripts/check-zed-package-contract.py
+          show-progress: false
+          submodules: false
+
+      - name: Check out exact Zed CLI
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: zed-pkg/zed-cli
+          ref: ${{ env.ZED_CLI_SHA }}
+          path: zed-cli
+          persist-credentials: false
+          show-progress: false
+          submodules: false
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.97.1
+
+      - name: Restore bounded Zed CLI cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: zed-cli
+
+      - name: Build exact Zed CLI
+        working-directory: zed-cli
+        run: cargo build --locked --release --bin zed
+
+      - name: Verify immutable package contract inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C zed-cli rev-parse HEAD)" = "$ZED_CLI_SHA"
+          grep -Fq 'org = "apostille-me"' package/.zpkg.toml
+          grep -Fq 'name = "apme-interfaces"' package/.zpkg.toml
+          grep -Fq 'version = "0.1.0"' package/.zpkg.toml
+          grep -Fq 'tag_format = "v{version}"' package/.zpkg.toml
+          grep -Fq 'url = "https://github.com/apostille-me/apme-interfaces"' package/.zpkg.toml
+          test "$(cat package/.zpkg.lock)" = 'version = 1'
+          python3 package/scripts/check-zed-package-contract.py
+
+      - name: Build release plan and native preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          zed="$GITHUB_WORKSPACE/zed-cli/target/release/zed"
+          cd package
+          "$zed" release plan --json > "$GITHUB_WORKSPACE/release-plan.json"
+          "$zed" release preflight
+
+      - name: Build deterministic Zed artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          zed="$GITHUB_WORKSPACE/zed-cli/target/release/zed"
+          mkdir -p "$RUNNER_TEMP/zed-pack"
+          cd package
+          "$zed" pack --out "$RUNNER_TEMP/zed-pack"
+          test -f "$RUNNER_TEMP/zed-pack/apostille-me-apme-interfaces-0.1.0.tar.gz"
+
+      - name: Validate release plan and artifact boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import tarfile
+          from pathlib import Path, PurePosixPath
+
+          plan_path = Path("release-plan.json")
+          plan = json.loads(plan_path.read_text(encoding="utf-8"))
+          expected_package = os.environ["EXPECTED_PACKAGE"]
+          expected_version = os.environ["EXPECTED_VERSION"]
+          expected_tag = os.environ["EXPECTED_TAG"]
+          source = plan.get("source", {})
+          assert source.get("package") == expected_package, source
+          assert source.get("version") == expected_version, source
+          assert source.get("vcs_tag") == expected_tag, source
+          assert source.get("repository") == "https://github.com/apostille-me/apme-interfaces", source
+          zed_artifacts = plan.get("zed", [])
+          assert len(zed_artifacts) == 1, zed_artifacts
+          assert zed_artifacts[0].get("package") == expected_package, zed_artifacts
+          assert zed_artifacts[0].get("version") == expected_version, zed_artifacts
+          assert not plan.get("native"), plan.get("native")
+          assert not plan.get("forge"), plan.get("forge")
+
+          archive = Path(os.environ["RUNNER_TEMP"]) / "zed-pack" / "apostille-me-apme-interfaces-0.1.0.tar.gz"
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          with tarfile.open(archive, "r:gz") as bundle:
+              members = [member for member in bundle.getmembers() if member.isfile()]
+          names = [PurePosixPath(member.name) for member in members]
+          assert names, "artifact must contain files"
+          for name in names:
+              assert not name.is_absolute(), name
+              assert ".." not in name.parts, name
+              assert name.parts[0] == "pkg", name
+          relative = {PurePosixPath(*name.parts[1:]).as_posix() for name in names}
+          required = {".zpkg.toml", "Cargo.toml", "LICENSE", "README.md", "openapi.yaml", "asyncapi.yaml"}
+          missing = required - relative
+          assert not missing, f"artifact missing required files: {sorted(missing)}"
+          prohibited_prefixes = (
+              ".git/",
+              ".github/",
+              ".env",
+              "target/",
+              "zed_modules/",
+              ".vendor/",
+              ".zed-staging/",
+          )
+          for path in relative:
+              assert not path.startswith(prohibited_prefixes), path
+
+          evidence = {
+              "schemaVersion": 1,
+              "package": expected_package,
+              "version": expected_version,
+              "expectedTag": expected_tag,
+              "zedCliRevision": os.environ["ZED_CLI_SHA"],
+              "artifact": archive.name,
+              "sha256": digest,
+              "size": archive.stat().st_size,
+              "fileCount": len(names),
+              "tagPresentAtPreflight": False,
+              "qualification": "Artifact and release-plan preflight only. Registry publication requires the immutable v0.1.0 tag and the protected zed-registry environment secret.",
+          }
+          Path("zed-release-preflight.json").write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(f"validated deterministic artifact {archive.name} ({len(names)} files, sha256={digest})")
+          PY
+
+      - name: Record immutable tag readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git -C package show-ref --tags --verify --quiet "refs/tags/$EXPECTED_TAG"; then
+            tagged="$(git -C package rev-list -n 1 "$EXPECTED_TAG")"
+            head="$(git -C package rev-parse HEAD)"
+            test "$tagged" = "$head"
+            tag_state='present-at-head'
+          else
+            tag_state='missing'
+          fi
+          python3 - "$tag_state" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          path = Path("zed-release-preflight.json")
+          evidence = json.loads(path.read_text(encoding="utf-8"))
+          evidence["tagState"] = sys.argv[1]
+          evidence["tagPresentAtPreflight"] = sys.argv[1] == "present-at-head"
+          path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          echo "### Zed release tag readiness" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "Expected tag: \`$EXPECTED_TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "State: **$tag_state**" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "A missing tag does not invalidate the package artifact; publication remains blocked until the reviewed main commit is tagged immutably." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Reject credential leakage in evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          prefixes = [
+              "gh" + "p_",
+              "github" + "_pat_",
+              "cf" + "at_",
+              "lin" + "_api_",
+              "AKIA",
+          ]
+          for path in [Path("release-plan.json"), Path("zed-release-preflight.json")]:
+              text = path.read_text(errors="replace")
+              for prefix in prefixes:
+                  if prefix in text:
+                      raise SystemExit(f"credential-shaped value found in {path}")
+          PY
+
+      - name: Upload bounded release-preflight evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: apme-interfaces-zed-release-preflight
+          path: |
+            release-plan.json
+            zed-release-preflight.json
+            ${{ runner.temp }}/zed-pack/apostille-me-apme-interfaces-0.1.0.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish immutable tagged artifact
+    needs: preflight
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: zed-registry
+    steps:
+      - name: Check out immutable tag without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: package
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          show-progress: false
+          submodules: false
+
+      - name: Check out exact Zed CLI
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: zed-pkg/zed-cli
+          ref: ${{ env.ZED_CLI_SHA }}
+          path: zed-cli
+          persist-credentials: false
+          show-progress: false
+          submodules: false
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.97.1
+
+      - name: Restore bounded Zed CLI cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: zed-cli
+
+      - name: Build exact Zed CLI
+        working-directory: zed-cli
+        run: cargo build --locked --release --bin zed
+
+      - name: Verify tag, clean source, and protected token presence
+        env:
+          ZED_PKG_TOKEN: ${{ secrets.ZED_PKG_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
+          test "$(git -C package rev-list -n 1 "$EXPECTED_TAG")" = "$(git -C package rev-parse HEAD)"
+          test -z "$(git -C package status --porcelain)"
+          test -n "$ZED_PKG_TOKEN"
+
+      - name: Publish exact tagged package
+        env:
+          ZED_PKG_TOKEN: ${{ secrets.ZED_PKG_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          zed="$GITHUB_WORKSPACE/zed-cli/target/release/zed"
+          cd package
+          "$zed" \
+            --registry "$ZED_REGISTRY" \
+            --token "$ZED_PKG_TOKEN" \
+            publish
+
+      - name: Verify public registry visibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          url = "https://registry.zpkg.net/v1/packages/apostille-me/apme-interfaces"
+          for attempt in range(12):
+              try:
+                  with urllib.request.urlopen(
+                      urllib.request.Request(
+                          url,
+                          headers={"Accept": "application/json", "User-Agent": "apme-interfaces-release/1"},
+                      ),
+                      timeout=20,
+                  ) as response:
+                      payload = json.load(response)
+                  if "0.1.0" in payload.get("versions", []):
+                      print("verified apostille-me/apme-interfaces@0.1.0 in the public registry")
+                      break
+              except Exception:
+                  pass
+              if attempt == 11:
+                  raise SystemExit("published version did not become visible in the public registry")
+              time.sleep(10)
+          PY
