@@ -20,6 +20,8 @@ def main() -> int:
     package = manifest.get("package", {})
     if package.get("org") != "apostille-me" or package.get("name") != "apme-interfaces":
         errors.append("package identity must be apostille-me/apme-interfaces")
+    if package.get("language") != "universal":
+        errors.append("package.language must use the supported universal variant")
     if package.get("repository", {}).get("url") != "https://github.com/apostille-me/apme-interfaces":
         errors.append("package.repository.url must match the canonical repository")
     dependencies = manifest.get("dependencies", {})

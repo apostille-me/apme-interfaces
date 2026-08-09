@@ -4,7 +4,7 @@ name = "apme-interfaces"
 version = "0.1.0"
 description = "Canonical Rust, JSON Schema, OpenAPI, AsyncAPI, and PostgreSQL contracts for Apostille Me"
 license = "MIT"
-language = "polyglot"
+language = "universal"
 
 [package.repository]
 vcs = "git"
