@@ -108,6 +108,16 @@ create table if not exists apme_case_transition_commands (
     primary key (tenant_id, idempotency_key)
 );
 
+create table if not exists apme_case_object_commands (
+    tenant_id uuid not null references apme_tenants(id),
+    idempotency_key text not null check (length(idempotency_key) between 1 and 200),
+    request_hash bytea not null check (octet_length(request_hash) = 32),
+    case_id uuid not null references apme_cases(id),
+    resulting_version bigint not null,
+    created_at timestamptz not null,
+    primary key (tenant_id, idempotency_key)
+);
+
 create table if not exists apme_tenant_audit_heads (
     tenant_id uuid primary key references apme_tenants(id),
     sequence bigint not null default 0,
@@ -118,7 +128,8 @@ create table if not exists apme_audit_receipts (
     receipt_id uuid primary key default gen_random_uuid(),
     tenant_id uuid not null references apme_tenants(id),
     sequence bigint not null,
-    action text not null check (action in ('create','transition','access','export','deletion')),
+    action text not null
+        check (action in ('create','transition','key_rotation','access','export','deletion')),
     actor_shared_user_id text not null,
     resource_type text not null,
     resource_id uuid not null,
@@ -314,6 +325,79 @@ begin
     insert into apme_case_transition_commands values
         (p_tenant, p_idempotency_key, p_request_hash, p_case, selected_case.version + 1, p_now);
     perform apme_append_audit(p_tenant, 'transition', p_actor, 'case', p_case, p_now, event_payload);
+    return query select p_case, selected_case.version + 1, next_event, next_hash, false;
+end;
+$$;
+
+create or replace function apme_rotate_case_object(
+    p_tenant uuid, p_actor text, p_case uuid, p_expected_version bigint,
+    p_idempotency_key text, p_request_hash bytea, p_object_reference text,
+    p_ciphertext_sha256 text, p_key_version integer, p_now timestamptz
+)
+returns table(case_id uuid, case_version bigint, event_id uuid, event_hash bytea, replayed boolean)
+language plpgsql as $$
+declare
+    selected_case apme_cases%rowtype;
+    existing_command apme_case_object_commands%rowtype;
+    member_role text;
+    prior_hash bytea;
+    next_hash bytea;
+    next_event uuid;
+    event_payload jsonb;
+begin
+    select role into member_role from apme_tenant_memberships
+     where tenant_id = p_tenant and shared_user_id = p_actor and active;
+    if member_role is distinct from 'administrator' then
+        raise exception 'APME_NOT_AUTHORIZED' using errcode = '42501';
+    end if;
+    perform pg_advisory_xact_lock(hashtextextended(p_tenant::text || ':' || p_idempotency_key, 3457));
+    select * into existing_command from apme_case_object_commands
+     where tenant_id = p_tenant and idempotency_key = p_idempotency_key;
+    if found then
+        if existing_command.request_hash <> p_request_hash or existing_command.case_id <> p_case then
+            raise exception 'APME_IDEMPOTENCY_CONFLICT' using errcode = '23505';
+        end if;
+        return query select p_case, existing_command.resulting_version, e.event_id, e.event_hash, true
+          from apme_case_events e where e.case_id = p_case
+           and e.case_version = existing_command.resulting_version;
+        return;
+    end if;
+    select * into selected_case from apme_cases
+     where id = p_case and tenant_id = p_tenant and tombstoned_at is null for update;
+    if not found then raise exception 'APME_CASE_NOT_FOUND' using errcode = 'P0002'; end if;
+    if selected_case.version <> p_expected_version then
+        raise exception 'APME_STALE_VERSION' using errcode = '40001';
+    end if;
+    if selected_case.encrypted_object_reference is null then
+        raise exception 'APME_CASE_OBJECT_NOT_FOUND' using errcode = 'P0002';
+    end if;
+    if p_key_version <= selected_case.object_key_version then
+        raise exception 'APME_KEY_VERSION_ROLLBACK' using errcode = '22023';
+    end if;
+    select e.event_hash into prior_hash from apme_case_events e
+     where e.case_id = p_case and e.case_version = selected_case.version;
+    event_payload := jsonb_build_object(
+        'old_ciphertext_sha256', selected_case.ciphertext_sha256,
+        'new_ciphertext_sha256', p_ciphertext_sha256,
+        'old_key_version', selected_case.object_key_version,
+        'new_key_version', p_key_version,
+        'version', selected_case.version + 1
+    );
+    next_hash := apme_hash_case_event(prior_hash, p_tenant, p_case, selected_case.version + 1,
+                                     'case.document_key_rotated', p_actor, p_now, event_payload);
+    update apme_cases set encrypted_object_reference = p_object_reference,
+        ciphertext_sha256 = p_ciphertext_sha256, object_key_version = p_key_version,
+        version = version + 1, updated_at = p_now
+     where id = p_case;
+    insert into apme_case_events(
+        tenant_id, case_id, case_version, event_type, actor_shared_user_id,
+        occurred_at, payload, previous_hash, event_hash
+    ) values (p_tenant, p_case, selected_case.version + 1, 'case.document_key_rotated',
+              p_actor, p_now, event_payload, prior_hash, next_hash)
+    returning apme_case_events.event_id into next_event;
+    insert into apme_case_object_commands values
+        (p_tenant, p_idempotency_key, p_request_hash, p_case, selected_case.version + 1, p_now);
+    perform apme_append_audit(p_tenant, 'key_rotation', p_actor, 'case', p_case, p_now, event_payload);
     return query select p_case, selected_case.version + 1, next_event, next_hash, false;
 end;
 $$;

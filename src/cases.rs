@@ -62,6 +62,12 @@ pub struct TransitionCaseCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RotateEncryptedObjectCommand {
+    pub expected_version: i64,
+    pub encrypted_document: EncryptedObjectReference,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaseEventReceipt {
     pub event_id: Uuid,
     pub tenant_id: Uuid,
@@ -102,17 +108,24 @@ impl CreateCaseCommand {
             return Err("retain_until must be in the future".into());
         }
         if let Some(document) = &self.encrypted_document {
-            if document.object_reference.trim().is_empty()
-                || document.object_reference.contains("://")
-                || document.ciphertext_sha256.len() != 64
-                || !document
-                    .ciphertext_sha256
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-                || document.key_version <= 0
-            {
-                return Err("invalid encrypted document reference".into());
-            }
+            document.validate()?;
+        }
+        Ok(())
+    }
+}
+
+impl EncryptedObjectReference {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.object_reference.trim().is_empty()
+            || self.object_reference.contains("://")
+            || self.ciphertext_sha256.len() != 64
+            || !self
+                .ciphertext_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            || self.key_version <= 0
+        {
+            return Err("invalid encrypted document reference".into());
         }
         Ok(())
     }

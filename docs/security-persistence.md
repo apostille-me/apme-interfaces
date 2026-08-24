@@ -60,9 +60,14 @@ entry makes verification fail.
 scrubs encrypted references and identifying operational metadata, and records a
 deletion event and audit receipt. Legal-held cases are excluded. Appointment and
 deadline rows remain tenant-bound and must be included in the same backup and
-restore boundary. Key rotation updates encrypted objects out of band; the product
-must validate ciphertext SHA-256 before atomically replacing the opaque reference
-and key version.
+restore boundary.
+
+Key rotation re-encrypts and verifies the object out of band, then calls
+`apme_rotate_case_object` as an administrator with the current case version, an
+idempotency key, the new opaque reference, verified ciphertext SHA-256, and a strictly
+increasing key version. The transaction advances the case version and preserves old
+and new ciphertext digests/key versions in the tamper-evident event and audit chains;
+it never stores the key or raw plaintext.
 
 ## Deployment gates
 
