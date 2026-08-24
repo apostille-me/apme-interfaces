@@ -42,6 +42,7 @@ create table if not exists apme_cases (
     object_key_version integer,
     created_at timestamptz not null,
     updated_at timestamptz not null,
+    unique (id, tenant_id),
     check (
         (encrypted_object_reference is null and ciphertext_sha256 is null and object_key_version is null)
         or (
@@ -59,26 +60,28 @@ create index if not exists apme_cases_tenant_created_idx
 create table if not exists apme_case_appointments (
     id uuid primary key default gen_random_uuid(),
     tenant_id uuid not null references apme_tenants(id),
-    case_id uuid not null references apme_cases(id),
+    case_id uuid not null,
     appointment_kind text not null check (length(appointment_kind) between 1 and 120),
     scheduled_at timestamptz not null,
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    foreign key (case_id, tenant_id) references apme_cases(id, tenant_id)
 );
 
 create table if not exists apme_case_deadlines (
     id uuid primary key default gen_random_uuid(),
     tenant_id uuid not null references apme_tenants(id),
-    case_id uuid not null references apme_cases(id),
+    case_id uuid not null,
     deadline_kind text not null check (length(deadline_kind) between 1 and 120),
     due_at timestamptz not null,
     completed_at timestamptz,
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    foreign key (case_id, tenant_id) references apme_cases(id, tenant_id)
 );
 
 create table if not exists apme_case_events (
     event_id uuid primary key default gen_random_uuid(),
     tenant_id uuid not null references apme_tenants(id),
-    case_id uuid not null references apme_cases(id),
+    case_id uuid not null,
     case_version bigint not null check (case_version > 0),
     event_type text not null,
     actor_shared_user_id text not null,
@@ -86,36 +89,40 @@ create table if not exists apme_case_events (
     payload jsonb not null,
     previous_hash bytea,
     event_hash bytea not null check (octet_length(event_hash) = 32),
-    unique (case_id, case_version)
+    unique (case_id, case_version),
+    foreign key (case_id, tenant_id) references apme_cases(id, tenant_id)
 );
 
 create table if not exists apme_case_create_commands (
     tenant_id uuid not null references apme_tenants(id),
     idempotency_key text not null check (length(idempotency_key) between 1 and 200),
     request_hash bytea not null check (octet_length(request_hash) = 32),
-    case_id uuid not null references apme_cases(id),
+    case_id uuid not null,
     created_at timestamptz not null,
-    primary key (tenant_id, idempotency_key)
+    primary key (tenant_id, idempotency_key),
+    foreign key (case_id, tenant_id) references apme_cases(id, tenant_id)
 );
 
 create table if not exists apme_case_transition_commands (
     tenant_id uuid not null references apme_tenants(id),
     idempotency_key text not null check (length(idempotency_key) between 1 and 200),
     request_hash bytea not null check (octet_length(request_hash) = 32),
-    case_id uuid not null references apme_cases(id),
+    case_id uuid not null,
     resulting_version bigint not null,
     created_at timestamptz not null,
-    primary key (tenant_id, idempotency_key)
+    primary key (tenant_id, idempotency_key),
+    foreign key (case_id, tenant_id) references apme_cases(id, tenant_id)
 );
 
 create table if not exists apme_case_object_commands (
     tenant_id uuid not null references apme_tenants(id),
     idempotency_key text not null check (length(idempotency_key) between 1 and 200),
     request_hash bytea not null check (octet_length(request_hash) = 32),
-    case_id uuid not null references apme_cases(id),
+    case_id uuid not null,
     resulting_version bigint not null,
     created_at timestamptz not null,
-    primary key (tenant_id, idempotency_key)
+    primary key (tenant_id, idempotency_key),
+    foreign key (case_id, tenant_id) references apme_cases(id, tenant_id)
 );
 
 create table if not exists apme_tenant_audit_heads (
