@@ -1,3 +1,9 @@
+pub mod cases;
+pub mod security;
+
+pub const TENANT_CASE_PERSISTENCE_MIGRATION: &str =
+    include_str!("../sql/002_tenant_case_persistence.sql");
+
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
     use std::fmt;

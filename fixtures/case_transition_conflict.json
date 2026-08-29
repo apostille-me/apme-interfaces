@@ -1,0 +1,29 @@
+{
+  "scenario": "competing_same_version_transitions",
+  "tenant_id": "11111111-1111-1111-1111-111111111111",
+  "case_id": "00000000-0000-4000-8000-000000000042",
+  "initial": {
+    "status": "intake",
+    "version": 1
+  },
+  "commands": [
+    {
+      "idempotency_key": "transition-42-a",
+      "expected_version": 1,
+      "to_status": "collecting_documents"
+    },
+    {
+      "idempotency_key": "transition-42-b",
+      "expected_version": 1,
+      "to_status": "collecting_documents"
+    }
+  ],
+  "expect": {
+    "success_count": 1,
+    "stale_version_count": 1,
+    "final_status": "collecting_documents",
+    "final_version": 2,
+    "transition_event_count": 1,
+    "audit_chain_valid": true
+  }
+}
