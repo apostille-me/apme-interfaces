@@ -1,0 +1,39 @@
+// AttoLang status values mirror the JSON Schema and Rust CaseStatus.
+// Wire names are the normative snake_case values; no case data is embedded.
+// expect-exit: 42
+define enum CaseStatus as
+  Intake
+  CollectingDocuments
+  Review
+  Submitted
+  Completed
+  Closed
+end
+
+pub fnc status_wire(CaseStatus status): string {
+  if status eq CaseStatus.Intake then return "intake"; fi
+  if status eq CaseStatus.CollectingDocuments then return "collecting_documents"; fi
+  if status eq CaseStatus.Review then return "review"; fi
+  if status eq CaseStatus.Submitted then return "submitted"; fi
+  if status eq CaseStatus.Completed then return "completed"; fi
+  return "closed";
+}
+
+pub fnc status_is_terminal(CaseStatus status): bool {
+  return status eq CaseStatus.Completed || status eq CaseStatus.Closed;
+}
+
+pub fnc main(): int {
+  if status_wire(CaseStatus.Intake) eq "intake",
+     status_wire(CaseStatus.CollectingDocuments) eq "collecting_documents",
+     status_wire(CaseStatus.Review) eq "review",
+     status_wire(CaseStatus.Submitted) eq "submitted",
+     status_wire(CaseStatus.Completed) eq "completed",
+     status_wire(CaseStatus.Closed) eq "closed",
+     status_is_terminal(CaseStatus.Completed),
+     status_is_terminal(CaseStatus.Closed),
+     !status_is_terminal(CaseStatus.Submitted) then
+    return 42;
+  fi
+  return 0;
+}
