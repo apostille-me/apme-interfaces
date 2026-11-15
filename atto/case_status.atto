@@ -19,20 +19,13 @@ pub fnc status_wire(CaseStatus status): string {
   return "closed";
 }
 
-pub fnc status_is_terminal(CaseStatus status): bool {
-  return status eq CaseStatus.Completed || status eq CaseStatus.Closed;
-}
-
 pub fnc main(): int {
   if status_wire(CaseStatus.Intake) eq "intake",
      status_wire(CaseStatus.CollectingDocuments) eq "collecting_documents",
      status_wire(CaseStatus.Review) eq "review",
      status_wire(CaseStatus.Submitted) eq "submitted",
      status_wire(CaseStatus.Completed) eq "completed",
-     status_wire(CaseStatus.Closed) eq "closed",
-     status_is_terminal(CaseStatus.Completed),
-     status_is_terminal(CaseStatus.Closed),
-     !status_is_terminal(CaseStatus.Submitted) then
+     status_wire(CaseStatus.Closed) eq "closed" then
     return 42;
   fi
   return 0;
