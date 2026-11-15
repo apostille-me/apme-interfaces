@@ -24,7 +24,15 @@ fn atto_case_status_matches_wire_schema() {
         assert!(source.contains(&format!("status_wire(CaseStatus.{variant}) eq \"{wire}\"")),
                 "missing executable fixture for {variant}");
     }
-    assert!(source.contains("status_is_terminal(CaseStatus.Completed)"));
-    assert!(source.contains("!status_is_terminal(CaseStatus.Submitted)"));
+    for (variant, wire) in [
+        (apme_interfaces::CaseStatus::Intake, "intake"),
+        (apme_interfaces::CaseStatus::CollectingDocuments, "collecting_documents"),
+        (apme_interfaces::CaseStatus::Review, "review"),
+        (apme_interfaces::CaseStatus::Submitted, "submitted"),
+        (apme_interfaces::CaseStatus::Completed, "completed"),
+        (apme_interfaces::CaseStatus::Closed, "closed"),
+    ] {
+        assert_eq!(serde_json::to_value(variant).unwrap(), wire);
+    }
     assert!(source.contains("// expect-exit: 42"));
 }
